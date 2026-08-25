@@ -1,0 +1,155 @@
+Derivatives Pricing Engine -- numerical validation report
+
+==============================================================================
+1. Cross-method agreement on a European call (benchmark = closed form)
+==============================================================================
+method                                              price   diff (bps)         ms
+Closed-form Black-Scholes                      9.22700551            -          -
+Binomial CRR (5000 steps)                      9.22661672        0.421        5.2
+FD Crank-Nicolson (800x800) +Rannacher         9.22640439        0.651       11.9
+Monte Carlo (2000000 paths, antithetic+control)     9.22698274        0.025       77.2
+
+  => all numerical methods agree with closed form to within 0.65 bps
+
+==============================================================================
+2. Monte Carlo: O(1/sqrt(N)) convergence and variance reduction
+==============================================================================
+
+Standard error vs path count (plain MC), exact = 10.45058357
+
+       paths          price      std error 95% half-width     SE ratio
+       10000    10.57047294     0.15012827     0.29424600            -
+       50000    10.49081631     0.06588117     0.12912472       2.2787
+      100000    10.51862013     0.04666607     0.09146382       1.4117
+      500000    10.43634416     0.02079085     0.04074932       2.2445
+     1000000    10.45804352     0.01471166     0.02883432       1.4132
+     5000000    10.45013583     0.00658227     0.01290102       2.2350
+
+  (quadrupling paths should halve the standard error)
+
+Variance reduction at a FIXED path budget of 1,000,000 paths:
+
+technique                         price      std error       vs plain         ms
+plain                       10.45221662     0.01472484           0.0%       47.8
+antithetic                  10.46040561     0.01041618          29.3%       29.1
+control-variate             10.45643492     0.00561600          61.9%       51.3
+antithetic+control          10.44995982     0.00275985          81.3%       30.6
+
+  (equal path count => equal cost, so this is a like-for-like comparison)
+
+==============================================================================
+3. Finite difference: grid convergence order
+==============================================================================
+
+implicit (halving both dS and dt each row)
+
+  spot pts   time pts            price      abs error        ratio
+        50         50    10.2777629145      1.728e-01            -
+       100        100    10.4001240715      5.046e-02       3.4249
+       200        200    10.4354218130      1.516e-02       3.3280
+       400        400    10.4454874350      5.096e-03       2.9751
+       800        800    10.4486542938      1.929e-03       2.6414
+
+Crank-Nicolson (halving both dS and dt each row)
+
+  spot pts   time pts            price      abs error        ratio
+        50         50    10.2997175599      1.509e-01            -
+       100        100    10.4106857125      3.990e-02       3.7813
+       200        200    10.4406651837      9.918e-03       4.0226
+       400        400    10.4481073990      2.476e-03       4.0055
+       800        800    10.4499647417      6.188e-04       4.0013
+
+  (ratio ~2 => 1st order, ratio ~4 => 2nd order)
+
+Rannacher start-up on a DIGITAL payoff (discontinuous => CN oscillates).
+Spatial grid is refined at a FIXED coarse time grid, which is exactly the
+regime where Crank-Nicolson fails: its amplification factor tends to -1 for
+high-frequency modes, so refining space injects modes CN does not damp.
+
+exact digital price = 0.5323248155
+
+spot pts time pts |       CN price     +Rannacher |       CN gamma     +Rannacher
+     200       10 |     0.49041765     0.51345323 |       0.020117      -0.000279
+     200       25 |     0.51357407     0.51354881 |      -0.000284      -0.000283
+     400       10 |     0.36295400     0.52286227 |       0.487960      -0.000304
+     400       25 |     0.52926026     0.52293460 |      -0.023183      -0.000307
+     800       10 |     0.21764483     0.52756314 |       3.267574      -0.000317
+     800       25 |     0.63381895     0.52762438 |      -1.358885      -0.000318
+    1600       10 |     0.12722918     0.52991373 |      15.142839      -0.000323
+    1600       25 |     0.79657766     0.52996954 |     -11.768493      -0.000323
+
+  (raw CN gamma changes SIGN and blows up as the spatial grid refines;
+   four half-size implicit steps at the start damp it completely)
+
+==============================================================================
+4. American early exercise: tree vs PSOR finite difference
+==============================================================================
+European put, closed form                           14.65531432
+European put, binomial tree                         14.65550693
+American put, binomial tree                         15.61795032
+American put, Crank-Nicolson + PSOR                 15.61721083
+
+early-exercise premium (tree)                        0.96263601
+tree vs PSOR disagreement (bps)                           0.473
+
+  (two independent methods agreeing on the premium is the real check)
+
+==============================================================================
+5. Barrier option: closed form vs PDE vs discretely-monitored MC
+==============================================================================
+vanilla call (no barrier)                               10.45058357
+down-and-out call, closed form (continuous)              8.66547166
+down-and-out call, Crank-Nicolson PDE                    8.66527782  (0.22 bps)
+
+Discrete monitoring bias in Monte Carlo, validated against the
+Broadie-Glasserman-Kou continuity correction, which predicts that a
+discretely-monitored barrier behaves like a continuous one at a barrier
+shifted away from the spot by exp(-0.5826 * vol * sqrt(T/m)):
+
+   dates       MC price        MC se  BGK predicted   difference    < 2 se?
+      12     9.59125866   0.01124959     9.58023149   0.01102717        yes
+      50     9.18699224   0.01150727     9.18224086   0.00475139        yes
+     250     8.91053641   0.01165235     8.91485072  -0.00431431        yes
+    1000     8.78847775   0.01172683     8.79406176  -0.00558401        yes
+    4000     8.74692663   0.01174278     8.73076446   0.01616218        yes
+
+  (a discretely-monitored knock-out is always worth MORE: fewer observation
+   dates mean fewer chances to breach. Matching BGK at every frequency shows
+   the gap is the predicted discretisation bias, not an implementation error)
+
+==============================================================================
+6. Greeks: analytic vs finite difference vs Monte Carlo
+==============================================================================
+greek              analytic          FD grid    MC (CRN bump)
+delta            0.50476274       0.50475270       0.50502378
+gamma            0.01828446       0.01828455       0.01835461
+vega            34.28336465              n/a      34.32748350
+
+  (MC gamma is the hardest: it is a second difference of a noisy
+   estimator, which is why common random numbers are essential)
+
+==============================================================================
+7. Implied volatility: Newton-Raphson with Brent fallback
+==============================================================================
+quotes inverted   : 28 / 28
+needed fallback   : 7  (Newton stalled on near-zero vega)
+usable for a fit  : 25  (rest are ill-conditioned, see below)
+
+max error over WELL-CONDITIONED points : 1.130e-06 vol points
+max error over ALL converged points    : 2.345e-01 vol points
+
+  The second number looks alarming and is entirely expected: in the deep
+  wings at short expiry, vega is ~1e-11, so the quote pins down no vol at
+  all. The solver still returns a root that reprices correctly -- it simply
+  flags that the root carries no information. A real chain is full of these,
+  and feeding them to a smile fit would corrupt it.
+
+Recovered smile ('  --  ' = ill-conditioned, excluded):
+
+     T \ K       50       70       85      100      115      130      180
+      0.05       --       --   0.2211   0.2008   0.2002   0.2125       --
+      0.25   0.4375   0.2760   0.2241   0.2038   0.2032   0.2155   0.3067
+      1.00   0.4488   0.2873   0.2353   0.2150   0.2144   0.2268   0.3179
+      2.00   0.4638   0.3023   0.2503   0.2300   0.2294   0.2418   0.3329
+      true   0.4488   0.2873   0.2353   0.2150   0.2144   0.2268   0.3179   <- input smile at T=1.00
+
